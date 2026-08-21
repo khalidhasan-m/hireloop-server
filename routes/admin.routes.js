@@ -37,13 +37,33 @@ module.exports = (
 
   router.get("/users", async (req, res) => {
     try {
+      const filter = {};
+      if (req.query.email) filter.email = { $regex: req.query.email, $options: "i" };
+      if (["seeker", "recruiter"].includes(req.query.role)) filter.role = req.query.role;
       const users = await userCollection
-        .find({})
+        .find(filter)
         .project({ name: 1, email: 1, role: 1, plan: 1, isSuspended: 1, createdAt: 1, image: 1 })
         .sort({ createdAt: -1 })
         .limit(200)
         .toArray();
       res.json({ success: true, data: users });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  router.patch("/users/:id/role", async (req, res) => {
+    try {
+      const { role } = req.body;
+      if (!["seeker", "recruiter"].includes(role)) {
+        return res.status(400).json({ success: false, message: "Role must be seeker or recruiter" });
+      }
+      const result = await userCollection.updateOne(
+        { _id: req.params.id },
+        { $set: { role, updatedAt: new Date() } },
+      );
+      if (!result.matchedCount) return res.status(404).json({ success: false, message: "User not found" });
+      res.json({ success: true, message: `User changed to ${role}` });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -104,6 +124,17 @@ module.exports = (
         { $set: { status: "closed", updatedAt: new Date() } },
       );
       res.json({ success: true, message: "Job closed" });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  router.delete("/jobs/:id", async (req, res) => {
+    try {
+      const result = await jobCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+      if (!result.deletedCount) return res.status(404).json({ success: false, message: "Job not found" });
+      await applicationCollection.deleteMany({ jobId: req.params.id });
+      res.json({ success: true, message: "Job removed" });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }

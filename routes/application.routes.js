@@ -5,7 +5,7 @@ const { checkSeekerApplicationLimit } = require("../middleware/planLimit");
 const { createApplicationDoc } = require("../models/Application");
 const { APPLICATION_STATUS } = require("../utils/constants");
 
-module.exports = (applicationCollection) => {
+module.exports = (applicationCollection, jobCollection) => {
   const router = express.Router();
 
   router.post("/", auth, checkSeekerApplicationLimit, async (req, res) => {
@@ -44,6 +44,8 @@ module.exports = (applicationCollection) => {
 
   router.get("/job/:jobId", auth, async (req, res) => {
     try {
+      const job = await jobCollection.findOne({ _id: new ObjectId(req.params.jobId) });
+      if (req.user.role === "recruiter" && (!job || job.recruiterId !== req.user.id)) return res.status(403).json({ success: false, message: "You do not own this job" });
       const applications = await applicationCollection
         .find({ jobId: req.params.jobId })
         .sort({ createdAt: -1 })
@@ -65,6 +67,10 @@ module.exports = (applicationCollection) => {
         });
       }
 
+      const existing = await applicationCollection.findOne({ _id: new ObjectId(req.params.id) });
+      if (!existing) return res.status(404).json({ success: false, message: "Application not found" });
+      const job = await jobCollection.findOne({ _id: new ObjectId(existing.jobId) });
+      if (req.user.role === "recruiter" && (!job || job.recruiterId !== req.user.id)) return res.status(403).json({ success: false, message: "You do not own this job" });
       const result = await applicationCollection.findOneAndUpdate(
         { _id: new ObjectId(req.params.id) },
         { $set: { status, updatedAt: new Date() } },

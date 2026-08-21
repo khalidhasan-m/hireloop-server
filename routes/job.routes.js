@@ -1,15 +1,22 @@
 const express = require("express");
 const { ObjectId } = require("mongodb");
-const auth = require("../middleware/auth"); // Assuming you have your auth middleware
+const auth = require("../middleware/auth");
+const { checkRecruiterJobLimit } = require("../middleware/planLimit");
+const { COMPANY_STATUS } = require("../utils/constants");
 
 module.exports = (jobCollection) => {
   const router = express.Router();
 
   // Create job
-  router.post("/", auth, async (req, res) => {
+  router.post("/", auth, checkRecruiterJobLimit, async (req, res) => {
     try {
+      const companyCollection = req.app.locals.companyCollection;
+      const company = companyCollection ? await companyCollection.findOne({ recruiterId: req.user.id, status: COMPANY_STATUS.APPROVED }) : null;
+      if (!company) return res.status(403).json({ success: false, message: "An approved company profile is required before posting jobs." });
       const newJob = {
         ...req.body,
+        companyId: company._id.toString(),
+        companyName: company.name,
         recruiterId: req.user.id,
         status: "active",
         createdAt: new Date(),

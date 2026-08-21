@@ -56,7 +56,7 @@ async function run() {
 
     const jobRoutes = require("./routes/job.routes")(jobCollection);
     const companyRoutes = require("./routes/company.routes")(companyCollection);
-    const applicationRoutes = require("./routes/application.routes")(applicationCollection);
+    const applicationRoutes = require("./routes/application.routes")(applicationCollection, jobCollection);
     const savedJobRoutes = require("./routes/savedJob.routes")(savedJobCollection, jobCollection);
     const paymentRoutes = require("./routes/payment.routes")(paymentCollection, userCollection);
     const adminRoutes = require("./routes/admin.routes")(
@@ -66,6 +66,8 @@ async function run() {
       paymentCollection,
       applicationCollection,
     );
+    const profileRoutes = require("./routes/profile.routes")(userCollection);
+    const analyticsRoutes = require("./routes/analytics.routes")({ jobCollection, applicationCollection, userCollection, paymentCollection });
 
     app.use("/api/jobs", jobRoutes);
     app.use("/api/companies", companyRoutes);
@@ -73,6 +75,8 @@ async function run() {
     app.use("/api/saved-jobs", savedJobRoutes);
     app.use("/api/payments", paymentRoutes);
     app.use("/api/admin", adminRoutes);
+    app.use("/api/profile", profileRoutes);
+    app.use("/api/analytics", analyticsRoutes);
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error);
   }

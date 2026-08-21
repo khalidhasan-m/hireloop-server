@@ -104,12 +104,32 @@ module.exports = (companyCollection) => {
     }
   });
 
-  // Public: Get single company by ID
+  // Public: List approved companies with optional industry filtering.
+  router.get("/", async (req, res) => {
+    try {
+      const filter = { status: COMPANY_STATUS.APPROVED };
+      if (req.query.industry && req.query.industry !== "all") filter.industry = req.query.industry;
+      const companies = await companyCollection.find(filter).sort({ name: 1 }).limit(500).toArray();
+      const jobCollection = req.app.locals.jobCollection;
+      const data = await Promise.all(companies.map(async (company) => ({
+        ...company,
+        openJobs: jobCollection
+          ? await jobCollection.countDocuments({ companyId: company._id.toString(), status: "active" })
+          : 0,
+      })));
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // Public: Get single approved company by ID.
   router.get("/:id", async (req, res) => {
     try {
       const companyId = req.params.id;
       const company = await companyCollection.findOne({
         _id: new ObjectId(companyId),
+        status: COMPANY_STATUS.APPROVED,
       });
 
       if (!company) {

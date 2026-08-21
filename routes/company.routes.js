@@ -108,7 +108,11 @@ module.exports = (companyCollection) => {
   router.get("/", async (req, res) => {
     try {
       const filter = { status: COMPANY_STATUS.APPROVED };
-      if (req.query.industry && req.query.industry !== "all") filter.industry = req.query.industry;
+      const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+      const search = String(req.query.q || req.query.search || "").trim();
+      if (search) { const expression = { $regex: escapeRegex(search), $options: "i" }; filter.$or = [{ name: expression }, { industry: expression }, { location: expression }, { description: expression }]; }
+      if (req.query.industry && req.query.industry !== "all") filter.industry = { $regex: `^${escapeRegex(req.query.industry)}$`, $options: "i" };
+      if (req.query.size && req.query.size !== "all") filter.employeeCount = { $regex: escapeRegex(req.query.size), $options: "i" };
       const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
       const limit = Math.min(24, Math.max(1, Number.parseInt(req.query.limit, 10) || 6));
       const total = await companyCollection.countDocuments(filter);

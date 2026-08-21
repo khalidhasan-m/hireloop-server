@@ -4,6 +4,7 @@ const auth = require("../middleware/auth");
 const { checkSeekerApplicationLimit } = require("../middleware/planLimit");
 const { createApplicationDoc } = require("../models/Application");
 const { APPLICATION_STATUS } = require("../utils/constants");
+const { sendApplicationStatusEmail } = require("../services/email.service");
 
 module.exports = (applicationCollection, jobCollection) => {
   const router = express.Router();
@@ -82,6 +83,7 @@ module.exports = (applicationCollection, jobCollection) => {
         return res.status(404).json({ success: false, message: "Application not found" });
       }
 
+      sendApplicationStatusEmail({ to: updated.candidateEmail, candidateName: updated.candidateName, jobTitle: job?.title, status }).catch((error) => console.error("Application notification failed:", error.message));
       res.json({
         success: true,
         message: "Application status updated successfully",

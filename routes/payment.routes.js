@@ -4,8 +4,27 @@ const { stripe } = require("../config/stripe");
 const { createPaymentDoc } = require("../models/Payment");
 const { SEEKER_PLANS, RECRUITER_PLANS } = require("../utils/constants");
 
-module.exports = (paymentCollection, userCollection) => {
+module.exports = (paymentCollection, userCollection, subscriptionCollection) => {
   const router = express.Router();
+
+  // Stripe calls this endpoint asynchronously after checkout/subscription events.
+  router.post("/webhook", async (req, res) => {
+    try {
+      if (!stripe) return res.status(503).json({ success: false, message: "Stripe is not configured" });
+      const signature = req.headers["stripe-signature"];
+      const event = signature && process.env.STRIPE_WEBHOOK_SECRET
+        ? stripe.webhooks.constructEvent(req.rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET)
+        : req.body;
+      const object = event.data?.object || event;
+      const metadata = object.metadata || {};
+      if (["checkout.session.completed", "customer.subscription.updated"].includes(event.type || "checkout.session.completed") && metadata.userId && metadata.plan) {
+        await paymentCollection.updateOne({ stripeSessionId: object.id }, { $set: { status: "succeeded", updatedAt: new Date(), transactionId: object.payment_intent || object.id } });
+        await userCollection.updateOne({ _id: metadata.userId }, { $set: { plan: metadata.plan.toUpperCase(), updatedAt: new Date() } });
+        if (subscriptionCollection) await subscriptionCollection.updateOne({ userId: metadata.userId, role: metadata.role || "seeker" }, { $set: { userId: metadata.userId, role: metadata.role || "seeker", plan: metadata.plan.toUpperCase(), stripeCustomerId: object.customer || null, stripeSubscriptionId: object.subscription || object.id, status: "active", updatedAt: new Date() } }, { upsert: true });
+      }
+      res.json({ received: true });
+    } catch (error) { res.status(400).json({ success: false, message: error.message }); }
+  });
 
   router.get("/my", auth, async (req, res) => {
     try {

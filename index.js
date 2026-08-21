@@ -5,7 +5,7 @@ const app = express();
 const port = process.env.PORT || 5050;
 const { MongoClient, ServerApiVersion } = require("mongodb");
 
-app.use(express.json());
+app.use(express.json({ verify: (req, res, buffer) => { req.rawBody = buffer; } }));
 app.use(
   cors({
     origin: ["http://localhost:3000", "http://localhost:3001"],
@@ -58,7 +58,7 @@ async function run() {
     const companyRoutes = require("./routes/company.routes")(companyCollection);
     const applicationRoutes = require("./routes/application.routes")(applicationCollection, jobCollection);
     const savedJobRoutes = require("./routes/savedJob.routes")(savedJobCollection, jobCollection);
-    const paymentRoutes = require("./routes/payment.routes")(paymentCollection, userCollection);
+    const paymentRoutes = require("./routes/payment.routes")(paymentCollection, userCollection, subscriptionCollection);
     const adminRoutes = require("./routes/admin.routes")(
       userCollection,
       companyCollection,

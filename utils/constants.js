@@ -46,20 +46,27 @@ const USER_ROLES = {
 
 // ======================
 // SEEKER PLANS
+// priceId from env: STRIPE_PRICE_SEEKER_PRO / STRIPE_PRICE_SEEKER_PREMIUM
+// If null, checkout uses price_data with `price` amount (works in test mode)
 // ======================
 const SEEKER_PLANS = {
   FREE: {
     name: "Free",
     price: 0,
-    priceId: null, // Stripe Price ID (add later)
+    priceId: null,
     maxApplicationsPerMonth: 3,
     maxSavedJobs: 10,
-    features: ["Browse & save up to 10 jobs", "Apply to up to 3 jobs/month", "Basic profile", "Email alerts"],
+    features: [
+      "Browse & save up to 10 jobs",
+      "Apply to up to 3 jobs/month",
+      "Basic profile",
+      "Email alerts",
+    ],
   },
   PRO: {
     name: "Pro",
     price: 19,
-    priceId: null,
+    priceId: process.env.STRIPE_PRICE_SEEKER_PRO || null,
     maxApplicationsPerMonth: 30,
     maxSavedJobs: Infinity,
     features: [
@@ -72,7 +79,7 @@ const SEEKER_PLANS = {
   PREMIUM: {
     name: "Premium",
     price: 39,
-    priceId: null,
+    priceId: process.env.STRIPE_PRICE_SEEKER_PREMIUM || null,
     maxApplicationsPerMonth: Infinity,
     maxSavedJobs: Infinity,
     features: [
@@ -104,7 +111,7 @@ const RECRUITER_PLANS = {
   GROWTH: {
     name: "Growth",
     price: 49,
-    priceId: null,
+    priceId: process.env.STRIPE_PRICE_RECRUITER_GROWTH || null,
     maxActiveJobs: 10,
     analytics: "basic",
     features: [
@@ -117,7 +124,7 @@ const RECRUITER_PLANS = {
   ENTERPRISE: {
     name: "Enterprise",
     price: 149,
-    priceId: null,
+    priceId: process.env.STRIPE_PRICE_RECRUITER_ENTERPRISE || null,
     maxActiveJobs: 50,
     analytics: "advanced",
     features: [
@@ -131,14 +138,8 @@ const RECRUITER_PLANS = {
   },
 };
 
-// ======================
-// JOB TYPES
-// ======================
 const JOB_TYPES = ["Full-time", "Part-time", "Remote", "Contract", "Internship"];
 
-// ======================
-// JOB CATEGORIES (example)
-// ======================
 const JOB_CATEGORIES = [
   "Software Engineering",
   "Product Design",

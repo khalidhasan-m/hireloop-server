@@ -12,15 +12,32 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection) => 
     try {
       if (!stripe) return res.status(503).json({ success: false, message: "Stripe is not configured" });
       const signature = req.headers["stripe-signature"];
-      const event = signature && process.env.STRIPE_WEBHOOK_SECRET
-        ? stripe.webhooks.constructEvent(req.rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET)
-        : req.body;
+      if (!process.env.STRIPE_WEBHOOK_SECRET || !signature || !req.rawBody) {
+        return res.status(503).json({ success: false, message: "Stripe webhook verification is not configured" });
+      }
+      const event = stripe.webhooks.constructEvent(req.rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET);
       const object = event.data?.object || event;
       const metadata = object.metadata || {};
-      if (["checkout.session.completed", "customer.subscription.updated"].includes(event.type || "checkout.session.completed") && metadata.userId && metadata.plan) {
-        await paymentCollection.updateOne({ stripeSessionId: object.id }, { $set: { status: "succeeded", updatedAt: new Date(), transactionId: object.payment_intent || object.id } });
+      if (event.type === "checkout.session.completed" && metadata.userId && metadata.plan) {
+        await paymentCollection.updateOne({ stripeSessionId: object.id, userId: metadata.userId }, { $set: { status: "succeeded", updatedAt: new Date(), transactionId: object.payment_intent || object.id } });
         await userCollection.updateOne({ _id: metadata.userId }, { $set: { plan: metadata.plan.toUpperCase(), updatedAt: new Date() } });
-        if (subscriptionCollection) await subscriptionCollection.updateOne({ userId: metadata.userId, role: metadata.role || "seeker" }, { $set: { userId: metadata.userId, role: metadata.role || "seeker", plan: metadata.plan.toUpperCase(), stripeCustomerId: object.customer || null, stripeSubscriptionId: object.subscription || object.id, status: "active", updatedAt: new Date() } }, { upsert: true });
+        if (subscriptionCollection) await subscriptionCollection.updateOne({ userId: metadata.userId }, { $set: { userId: metadata.userId, role: metadata.role || "seeker", plan: metadata.plan.toUpperCase(), stripeCustomerId: object.customer || null, stripeSubscriptionId: object.subscription || null, status: "active", cancelAtPeriodEnd: false, updatedAt: new Date() } }, { upsert: true });
+      }
+      if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.type) && subscriptionCollection) {
+        const current = await subscriptionCollection.findOne({ $or: [{ stripeSubscriptionId: object.id }, { stripeCustomerId: object.customer }, { userId: metadata.userId }] });
+        if (current) {
+          const nextStatus = event.type === "customer.subscription.deleted" ? "canceled" : object.status;
+          await subscriptionCollection.updateOne({ _id: current._id }, { $set: { status: nextStatus, cancelAtPeriodEnd: Boolean(object.cancel_at_period_end), currentPeriodEnd: object.current_period_end ? new Date(object.current_period_end * 1000) : current.currentPeriodEnd, updatedAt: new Date() } });
+          if (event.type === "customer.subscription.deleted") await userCollection.updateOne({ _id: current.userId }, { $set: { plan: "FREE", updatedAt: new Date() } });
+        }
+      }
+      if (["invoice.payment_succeeded", "invoice.payment_failed"].includes(event.type) && subscriptionCollection) {
+        const current = await subscriptionCollection.findOne({ $or: [{ stripeSubscriptionId: object.subscription }, { stripeCustomerId: object.customer }] });
+        if (current) {
+          const succeeded = event.type === "invoice.payment_succeeded";
+          await paymentCollection.updateOne({ stripePaymentIntentId: object.payment_intent || object.id }, { $setOnInsert: createPaymentDoc({ userId: current.userId, role: current.role, plan: current.plan, amount: Number(object.amount_paid || object.amount_due || 0) / 100, stripePaymentIntentId: object.payment_intent || object.id, transactionId: object.id, status: succeeded ? "succeeded" : "failed" }) });
+          await subscriptionCollection.updateOne({ _id: current._id }, { $set: { status: succeeded ? "active" : "past_due", updatedAt: new Date() } });
+        }
       }
       res.json({ received: true });
     } catch (error) { res.status(400).json({ success: false, message: error.message }); }

@@ -109,7 +109,12 @@ module.exports = (companyCollection) => {
     try {
       const filter = { status: COMPANY_STATUS.APPROVED };
       if (req.query.industry && req.query.industry !== "all") filter.industry = req.query.industry;
-      const companies = await companyCollection.find(filter).sort({ name: 1 }).limit(500).toArray();
+      const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+      const limit = Math.min(24, Math.max(1, Number.parseInt(req.query.limit, 10) || 6));
+      const total = await companyCollection.countDocuments(filter);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      const currentPage = Math.min(page, totalPages);
+      const companies = await companyCollection.find(filter).sort({ name: 1 }).skip((currentPage - 1) * limit).limit(limit).toArray();
       const jobCollection = req.app.locals.jobCollection;
       const data = await Promise.all(companies.map(async (company) => ({
         ...company,
@@ -117,7 +122,7 @@ module.exports = (companyCollection) => {
           ? await jobCollection.countDocuments({ companyId: company._id.toString(), status: "active" })
           : 0,
       })));
-      res.json({ success: true, data });
+      res.json({ success: true, data, pagination: { page: currentPage, limit, total, totalPages } });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }

@@ -16,9 +16,10 @@ module.exports = (
 
   router.get("/stats", async (req, res) => {
     try {
-      const [users, companies, jobs, payments, applications, pendingCompanies] =
+      const [users, recruiters, companies, jobs, payments, applications, pendingCompanies] =
         await Promise.all([
           userCollection.countDocuments({}),
+          userCollection.countDocuments({ role: "recruiter" }),
           companyCollection.countDocuments({}),
           jobCollection.countDocuments({}),
           paymentCollection.countDocuments({}),
@@ -28,7 +29,7 @@ module.exports = (
 
       res.json({
         success: true,
-        data: { users, companies, jobs, payments, applications, pendingCompanies },
+        data: { users, recruiters, companies, jobs, payments, applications, pendingCompanies },
       });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -143,7 +144,10 @@ module.exports = (
   router.get("/payments", async (req, res) => {
     try {
       const payments = await paymentCollection.find({}).sort({ createdAt: -1 }).limit(200).toArray();
-      res.json({ success: true, data: payments });
+      const userIds = payments.map((payment) => payment.userId).filter(Boolean);
+      const users = await userCollection.find({ _id: { $in: userIds } }).project({ email: 1 }).toArray();
+      const emails = Object.fromEntries(users.map((user) => [user._id.toString(), user.email]));
+      res.json({ success: true, data: payments.map((payment) => ({ ...payment, userEmail: emails[String(payment.userId)] || payment.userEmail || null })) });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }

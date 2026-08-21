@@ -6,6 +6,7 @@ const port = process.env.PORT || 5050;
 const { MongoClient, ServerApiVersion } = require("mongodb");
 
 app.use(express.json({ verify: (req, res, buffer) => { req.rawBody = buffer; } }));
+app.use("/uploads", express.static(require("path").join(process.cwd(), "uploads")));
 app.use(
   cors({
     origin: ["http://localhost:3000", "http://localhost:3001"],
@@ -17,7 +18,7 @@ app.get("/", (req, res) => {
   res.send("Hireloop Server is running!");
 });
 
-const uri = process.env.MONGO_DB_URI;
+const uri = process.env.MONGO_DB_URI || "mongodb://127.0.0.1:27017";
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -44,6 +45,8 @@ async function run() {
 
     const userCollection = database.collection("user");
     const sessionCollection = database.collection("session");
+    const interviewCollection = database.collection("interviews");
+    const notificationCollection = database.collection("notifications");
 
     app.locals.jobCollection = jobCollection;
     app.locals.companyCollection = companyCollection;
@@ -53,6 +56,8 @@ async function run() {
     app.locals.subscriptionCollection = subscriptionCollection;
     app.locals.userCollection = userCollection;
     app.locals.sessionCollection = sessionCollection;
+    app.locals.interviewCollection = interviewCollection;
+    app.locals.notificationCollection = notificationCollection;
 
     const jobRoutes = require("./routes/job.routes")(jobCollection);
     const companyRoutes = require("./routes/company.routes")(companyCollection);
@@ -68,6 +73,8 @@ async function run() {
     );
     const profileRoutes = require("./routes/profile.routes")(userCollection);
     const analyticsRoutes = require("./routes/analytics.routes")({ jobCollection, applicationCollection, userCollection, paymentCollection });
+    const uploadRoutes = require("./routes/upload.routes")({ userCollection, companyCollection });
+    const interactionRoutes = require("./routes/interaction.routes")({ interviewCollection, notificationCollection, applicationCollection, jobCollection });
 
     app.use("/api/jobs", jobRoutes);
     app.use("/api/companies", companyRoutes);
@@ -77,6 +84,8 @@ async function run() {
     app.use("/api/admin", adminRoutes);
     app.use("/api/profile", profileRoutes);
     app.use("/api/analytics", analyticsRoutes);
+    app.use("/api/uploads", uploadRoutes);
+    app.use("/api", interactionRoutes);
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error);
   }

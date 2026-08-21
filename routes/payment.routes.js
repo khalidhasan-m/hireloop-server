@@ -103,6 +103,41 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection) => 
     }
   });
 
+  router.get("/subscription", auth, async (req, res) => {
+    const subscription = await subscriptionCollection?.findOne({ userId: req.user.id });
+    res.json({ success: true, data: subscription || { plan: req.user.plan || "FREE", status: "inactive" } });
+  });
+
+  router.post("/change-plan", auth, async (req, res) => {
+    try {
+      if (!stripe || !subscriptionCollection) return res.status(503).json({ success: false, message: "Stripe subscriptions are not configured" });
+      const planName = String(req.body?.plan || "").toUpperCase();
+      const plans = req.user.role === "recruiter" ? RECRUITER_PLANS : SEEKER_PLANS;
+      const nextPlan = plans[planName];
+      if (!nextPlan || !nextPlan.price) return res.status(400).json({ success: false, message: "A paid plan is required" });
+      const current = await subscriptionCollection.findOne({ userId: req.user.id });
+      if (!current?.stripeSubscriptionId) return res.status(400).json({ success: false, message: "No active Stripe subscription found" });
+      const subscription = await stripe.subscriptions.retrieve(current.stripeSubscriptionId);
+      const priceId = nextPlan.priceId;
+      if (!priceId) return res.status(400).json({ success: false, message: "Configure a Stripe Price ID before changing plans" });
+      const updated = await stripe.subscriptions.update(current.stripeSubscriptionId, { items: [{ id: subscription.items.data[0].id, price: priceId }], proration_behavior: "create_prorations" });
+      await subscriptionCollection.updateOne({ userId: req.user.id }, { $set: { plan: planName, status: updated.status, updatedAt: new Date() } });
+      await userCollection.updateOne({ _id: req.user.id }, { $set: { plan: planName, updatedAt: new Date() } });
+      res.json({ success: true, data: { plan: planName, status: updated.status } });
+    } catch (error) { res.status(500).json({ success: false, message: error.message }); }
+  });
+
+  router.post("/cancel", auth, async (req, res) => {
+    try {
+      if (!stripe || !subscriptionCollection) return res.status(503).json({ success: false, message: "Stripe subscriptions are not configured" });
+      const current = await subscriptionCollection.findOne({ userId: req.user.id });
+      if (!current?.stripeSubscriptionId) return res.status(400).json({ success: false, message: "No active subscription found" });
+      const updated = await stripe.subscriptions.update(current.stripeSubscriptionId, { cancel_at_period_end: true });
+      await subscriptionCollection.updateOne({ userId: req.user.id }, { $set: { cancelAtPeriodEnd: true, currentPeriodEnd: new Date(updated.current_period_end * 1000), updatedAt: new Date() } });
+      res.json({ success: true, message: "Subscription will cancel at the end of the billing period" });
+    } catch (error) { res.status(500).json({ success: false, message: error.message }); }
+  });
+
   router.post("/confirm", auth, async (req, res) => {
     try {
       const { sessionId, plan } = req.body;

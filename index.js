@@ -72,6 +72,7 @@ async function run() {
       jobCollection,
       paymentCollection,
       applicationCollection,
+      subscriptionCollection,
     );
     const profileRoutes = require("./routes/profile.routes")(userCollection);
     const analyticsRoutes = require("./routes/analytics.routes")({ jobCollection, applicationCollection, userCollection, paymentCollection });

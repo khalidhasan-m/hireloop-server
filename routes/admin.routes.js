@@ -2,7 +2,8 @@ const express = require("express");
 const { ObjectId } = require("mongodb");
 const auth = require("../middleware/auth");
 const { adminOnly } = require("../middleware/role");
-const { COMPANY_STATUS } = require("../utils/constants");
+const { COMPANY_STATUS, SEEKER_PLANS, RECRUITER_PLANS } = require("../utils/constants");
+const { stripe } = require("../config/stripe");
 
 module.exports = (
   userCollection,
@@ -10,6 +11,7 @@ module.exports = (
   jobCollection,
   paymentCollection,
   applicationCollection,
+  subscriptionCollection,
 ) => {
   const router = express.Router();
   router.use(auth, adminOnly);
@@ -100,6 +102,33 @@ module.exports = (
       const result = await userCollection.deleteOne(userFilter(req.params.id));
       if (!result.deletedCount) return res.status(404).json({ success: false, message: "User not found" });
       res.json({ success: true, message: "User deleted" });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  router.patch("/users/:id/subscription", async (req, res) => {
+    try {
+      const target = await userCollection.findOne(userFilter(req.params.id));
+      if (!target) return res.status(404).json({ success: false, message: "User not found" });
+      if (!["seeker", "recruiter"].includes(target.role)) return res.status(400).json({ success: false, message: "Only Seeker and Recruiter accounts can receive a plan" });
+      if (target.isSuspended) return res.status(400).json({ success: false, message: "Activate the user before upgrading their plan" });
+      const planName = String(req.body?.plan || "").toUpperCase();
+      const plans = target.role === "recruiter" ? RECRUITER_PLANS : SEEKER_PLANS;
+      const plan = plans[planName];
+      if (!plan || !plan.price) return res.status(400).json({ success: false, message: "A valid paid plan is required" });
+      const current = subscriptionCollection ? await subscriptionCollection.findOne({ userId: target._id.toString() }) : null;
+      let mode = "admin_granted";
+      let stripeSubscriptionId = current?.stripeSubscriptionId || null;
+      if (stripe && current?.stripeSubscriptionId) {
+        if (!plan.priceId) return res.status(400).json({ success: false, message: "Configure the Stripe Price ID for this plan first" });
+        const updated = await stripe.subscriptions.update(current.stripeSubscriptionId, { items: [{ id: (await stripe.subscriptions.retrieve(current.stripeSubscriptionId)).items.data[0].id, price: plan.priceId }], proration_behavior: "create_prorations" });
+        stripeSubscriptionId = updated.id;
+        mode = "stripe_subscription_updated";
+      }
+      await userCollection.updateOne(userFilter(req.params.id), { $set: { plan: planName, updatedAt: new Date() } });
+      if (subscriptionCollection) await subscriptionCollection.updateOne({ userId: target._id.toString() }, { $set: { userId: target._id.toString(), role: target.role, plan: planName, status: "active", adminGranted: mode === "admin_granted", stripeSubscriptionId, updatedAt: new Date() } }, { upsert: true });
+      res.json({ success: true, message: `${target.role} upgraded to ${plan.name}`, data: { userId: target._id, plan: planName, mode, stripeSubscriptionId } });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }

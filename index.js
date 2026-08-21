@@ -47,6 +47,7 @@ async function run() {
     const sessionCollection = database.collection("session");
     const interviewCollection = database.collection("interviews");
     const notificationCollection = database.collection("notifications");
+    const messageCollection = database.collection("messages");
 
     app.locals.jobCollection = jobCollection;
     app.locals.companyCollection = companyCollection;
@@ -58,6 +59,7 @@ async function run() {
     app.locals.sessionCollection = sessionCollection;
     app.locals.interviewCollection = interviewCollection;
     app.locals.notificationCollection = notificationCollection;
+    app.locals.messageCollection = messageCollection;
 
     const jobRoutes = require("./routes/job.routes")(jobCollection);
     const companyRoutes = require("./routes/company.routes")(companyCollection);
@@ -74,7 +76,7 @@ async function run() {
     const profileRoutes = require("./routes/profile.routes")(userCollection);
     const analyticsRoutes = require("./routes/analytics.routes")({ jobCollection, applicationCollection, userCollection, paymentCollection });
     const uploadRoutes = require("./routes/upload.routes")({ userCollection, companyCollection });
-    const interactionRoutes = require("./routes/interaction.routes")({ interviewCollection, notificationCollection, applicationCollection, jobCollection });
+    const interactionRoutes = require("./routes/interaction.routes")({ interviewCollection, notificationCollection, messageCollection, applicationCollection, jobCollection });
 
     app.use("/api/jobs", jobRoutes);
     app.use("/api/companies", companyRoutes);

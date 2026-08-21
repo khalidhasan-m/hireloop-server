@@ -13,6 +13,11 @@ module.exports = (
 ) => {
   const router = express.Router();
   router.use(auth, adminOnly);
+  const userFilter = (id) => {
+    const filters = [{ _id: id }];
+    if (ObjectId.isValid(id)) filters.push({ _id: new ObjectId(id) });
+    return { $or: filters };
+  };
 
   router.get("/stats", async (req, res) => {
     try {
@@ -60,7 +65,7 @@ module.exports = (
         return res.status(400).json({ success: false, message: "Role must be seeker or recruiter" });
       }
       const result = await userCollection.updateOne(
-        { _id: req.params.id },
+        userFilter(req.params.id),
         { $set: { role, updatedAt: new Date() } },
       );
       if (!result.matchedCount) return res.status(404).json({ success: false, message: "User not found" });
@@ -73,11 +78,28 @@ module.exports = (
   router.patch("/users/:id/suspend", async (req, res) => {
     try {
       const { suspended } = req.body;
+      const target = await userCollection.findOne(userFilter(req.params.id));
+      if (!target) return res.status(404).json({ success: false, message: "User not found" });
+      if (target.role === "admin") return res.status(403).json({ success: false, message: "Admin accounts cannot be suspended here" });
       await userCollection.updateOne(
-        { _id: req.params.id },
+        userFilter(req.params.id),
         { $set: { isSuspended: !!suspended, updatedAt: new Date() } },
       );
-      res.json({ success: true, message: suspended ? "User suspended" : "User unsuspended" });
+      res.json({ success: true, message: suspended ? "User suspended" : "User activated" });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  router.delete("/users/:id", async (req, res) => {
+    try {
+      if (String(req.user.id) === String(req.params.id)) return res.status(400).json({ success: false, message: "You cannot delete your own admin account" });
+      const target = await userCollection.findOne(userFilter(req.params.id));
+      if (!target) return res.status(404).json({ success: false, message: "User not found" });
+      if (target.role === "admin") return res.status(403).json({ success: false, message: "Admin accounts cannot be deleted here" });
+      const result = await userCollection.deleteOne(userFilter(req.params.id));
+      if (!result.deletedCount) return res.status(404).json({ success: false, message: "User not found" });
+      res.json({ success: true, message: "User deleted" });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -98,11 +120,13 @@ module.exports = (
       if (![COMPANY_STATUS.APPROVED, COMPANY_STATUS.REJECTED, COMPANY_STATUS.PENDING].includes(status)) {
         return res.status(400).json({ success: false, message: "Invalid status" });
       }
+      if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid company ID" });
       const result = await companyCollection.findOneAndUpdate(
         { _id: new ObjectId(req.params.id) },
         { $set: { status, updatedAt: new Date() } },
         { returnDocument: "after" },
       );
+      if (!result.value && !result._id) return res.status(404).json({ success: false, message: "Company not found" });
       res.json({ success: true, data: result.value || result });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });

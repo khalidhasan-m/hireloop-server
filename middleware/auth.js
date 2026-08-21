@@ -68,6 +68,10 @@ const auth = async (req, res, next) => {
       });
     }
 
+    if (user.isSuspended && user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Your account has been suspended. Contact an administrator." });
+    }
+
     req.user = {
       id: user._id.toString(),
       email: user.email,

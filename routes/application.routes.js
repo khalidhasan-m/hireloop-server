@@ -38,3 +38,70 @@ module.exports = (applicationCollection, jobCollection, notificationCollection) 
       res.status(500).json({ success: false, message: error.message });
     }
   });
+
+  router.get("/my", auth, async (req, res) => {
+    try {
+      const applications = await applicationCollection
+        .find({ candidateId: req.user.id })
+        .sort({ createdAt: -1 })
+        .toArray();
+      res.json({ success: true, data: applications });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  router.get("/job/:jobId", auth, async (req, res) => {
+    try {
+      const job = await jobCollection.findOne({ _id: new ObjectId(req.params.jobId) });
+      if (req.user.role === "recruiter" && (!job || job.recruiterId !== req.user.id)) return res.status(403).json({ success: false, message: "You do not own this job" });
+      const applications = await applicationCollection
+        .find({ jobId: req.params.jobId })
+        .sort({ createdAt: -1 })
+        .toArray();
+      res.json({ success: true, data: applications });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  router.patch("/:id/status", auth, async (req, res) => {
+    try {
+      const { status } = req.body;
+      const valid = Object.values(APPLICATION_STATUS);
+      if (!valid.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Must be one of: ${valid.join(", ")}`,
+        });
+      }
+
+      const existing = await applicationCollection.findOne({ _id: new ObjectId(req.params.id) });
+      if (!existing) return res.status(404).json({ success: false, message: "Application not found" });
+      const job = await jobCollection.findOne({ _id: new ObjectId(existing.jobId) });
+      if (req.user.role === "recruiter" && (!job || job.recruiterId !== req.user.id)) return res.status(403).json({ success: false, message: "You do not own this job" });
+      const result = await applicationCollection.findOneAndUpdate(
+        { _id: new ObjectId(req.params.id) },
+        { $set: { status, updatedAt: new Date() } },
+        { returnDocument: "after" },
+      );
+
+      const updated = result.value || result;
+      if (!updated || !updated._id) {
+        return res.status(404).json({ success: false, message: "Application not found" });
+      }
+
+      await createNotification(notificationCollection, { userId: updated.candidateId, type: "application", title: "Application status updated", body: `Your application for ${job?.title || "a job"} is now ${status}.`, applicationId: String(updated._id), status });
+      sendApplicationStatusEmail({ to: updated.candidateEmail, candidateName: updated.candidateName, jobTitle: job?.title, status }).catch((error) => console.error("Application notification failed:", error.message));
+      res.json({
+        success: true,
+        message: "Application status updated successfully",
+        data: updated,
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  return router;
+};

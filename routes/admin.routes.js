@@ -169,6 +169,19 @@ module.exports = (
     }
   });
 
+  router.delete("/companies/:id", async (req, res) => {
+    try {
+      if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid company ID" });
+      const company = await companyCollection.findOne({ _id: new ObjectId(req.params.id) });
+      if (!company) return res.status(404).json({ success: false, message: "Company not found" });
+      if (company.status !== COMPANY_STATUS.REJECTED) return res.status(400).json({ success: false, message: "Only rejected companies can be deleted" });
+      await companyCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+      res.json({ success: true, message: "Rejected company deleted" });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   router.get("/jobs", async (req, res) => {
     try {
       const jobs = await jobCollection.find({}).sort({ createdAt: -1 }).limit(200).toArray();

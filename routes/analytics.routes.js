@@ -17,13 +17,15 @@ module.exports = ({ jobCollection, applicationCollection, userCollection, paymen
 
   router.get("/admin", auth, roleGuard("admin"), async (req, res) => {
     try {
-      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const requestedDays = Number.parseInt(req.query.days, 10);
+      const days = [7, 15, 30].includes(requestedDays) ? requestedDays : 30;
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       const [categories, registrations, revenue] = await Promise.all([
         jobCollection.aggregate([{ $group: { _id: "$category", jobs: { $sum: 1 } } }, { $sort: { jobs: -1 } }]).toArray(),
         userCollection.aggregate([{ $match: { createdAt: { $gte: since } } }, { $group: { _id: { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }, users: { $sum: 1 } } }, { $sort: { _id: 1 } }]).toArray(),
-        paymentCollection.aggregate([{ $match: { status: "succeeded" } }, { $group: { _id: null, total: { $sum: "$amount" } } }]).toArray(),
+        paymentCollection.aggregate([{ $match: { status: "succeeded", createdAt: { $gte: since } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]).toArray(),
       ]);
-      res.json({ success: true, data: { categories, registrations, revenue: revenue[0]?.total || 0 } });
+      res.json({ success: true, data: { days, categories, registrations, revenue: revenue[0]?.total || 0 } });
     } catch (error) { res.status(500).json({ success: false, message: error.message }); }
   });
 

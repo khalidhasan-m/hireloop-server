@@ -4,6 +4,7 @@ const auth = require("../middleware/auth");
 const { adminOnly } = require("../middleware/role");
 const { COMPANY_STATUS, SEEKER_PLANS, RECRUITER_PLANS } = require("../utils/constants");
 const { stripe } = require("../config/stripe");
+const { createNotification } = require("../services/notification.service");
 
 module.exports = (
   userCollection,
@@ -12,6 +13,7 @@ module.exports = (
   paymentCollection,
   applicationCollection,
   subscriptionCollection,
+  notificationCollection,
 ) => {
   const router = express.Router();
   router.use(auth, adminOnly);
@@ -71,6 +73,7 @@ module.exports = (
         { $set: { role, updatedAt: new Date() } },
       );
       if (!result.matchedCount) return res.status(404).json({ success: false, message: "User not found" });
+      await createNotification(notificationCollection, { userId: req.params.id, type: "account", title: "Account role updated", body: `An administrator changed your account role to ${role}.` });
       res.json({ success: true, message: `User changed to ${role}` });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -87,6 +90,7 @@ module.exports = (
         userFilter(req.params.id),
         { $set: { isSuspended: !!suspended, updatedAt: new Date() } },
       );
+      await createNotification(notificationCollection, { userId: req.params.id, type: "account", title: suspended ? "Account suspended" : "Account activated", body: suspended ? "Your HireLoop account has been suspended by an administrator." : "Your HireLoop account has been activated by an administrator." });
       res.json({ success: true, message: suspended ? "User suspended" : "User activated" });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -128,6 +132,7 @@ module.exports = (
       }
       await userCollection.updateOne(userFilter(req.params.id), { $set: { plan: planName, updatedAt: new Date() } });
       if (subscriptionCollection) await subscriptionCollection.updateOne({ userId: target._id.toString() }, { $set: { userId: target._id.toString(), role: target.role, plan: planName, status: "active", adminGranted: mode === "admin_granted", stripeSubscriptionId, updatedAt: new Date() } }, { upsert: true });
+      await createNotification(notificationCollection, { userId: target._id.toString(), type: "billing", title: "Subscription updated", body: `An administrator upgraded your account to the ${plan.name} plan.` });
       res.json({ success: true, message: `${target.role} upgraded to ${plan.name}`, data: { userId: target._id, plan: planName, mode, stripeSubscriptionId } });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -155,8 +160,10 @@ module.exports = (
         { $set: { status, updatedAt: new Date() } },
         { returnDocument: "after" },
       );
-      if (!result.value && !result._id) return res.status(404).json({ success: false, message: "Company not found" });
-      res.json({ success: true, data: result.value || result });
+      const company = result.value || result;
+      if (!company || !company._id) return res.status(404).json({ success: false, message: "Company not found" });
+      if (company.recruiterId && status !== COMPANY_STATUS.PENDING) await createNotification(notificationCollection, { userId: company.recruiterId, type: "company", title: `Company ${status.toLowerCase()}`, body: `Your company profile has been ${status.toLowerCase()} by an administrator.`, companyId: String(company._id) });
+      res.json({ success: true, data: company });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }

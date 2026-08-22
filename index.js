@@ -63,9 +63,9 @@ async function run() {
 
     const jobRoutes = require("./routes/job.routes")(jobCollection);
     const companyRoutes = require("./routes/company.routes")(companyCollection);
-    const applicationRoutes = require("./routes/application.routes")(applicationCollection, jobCollection);
+    const applicationRoutes = require("./routes/application.routes")(applicationCollection, jobCollection, notificationCollection);
     const savedJobRoutes = require("./routes/savedJob.routes")(savedJobCollection, jobCollection);
-    const paymentRoutes = require("./routes/payment.routes")(paymentCollection, userCollection, subscriptionCollection);
+    const paymentRoutes = require("./routes/payment.routes")(paymentCollection, userCollection, subscriptionCollection, notificationCollection);
     const adminRoutes = require("./routes/admin.routes")(
       userCollection,
       companyCollection,
@@ -73,6 +73,7 @@ async function run() {
       paymentCollection,
       applicationCollection,
       subscriptionCollection,
+      notificationCollection,
     );
     const profileRoutes = require("./routes/profile.routes")(userCollection);
     const analyticsRoutes = require("./routes/analytics.routes")({ jobCollection, applicationCollection, userCollection, paymentCollection });

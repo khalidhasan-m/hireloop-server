@@ -3,8 +3,9 @@ const auth = require("../middleware/auth");
 const { stripe } = require("../config/stripe");
 const { createPaymentDoc } = require("../models/Payment");
 const { SEEKER_PLANS, RECRUITER_PLANS } = require("../utils/constants");
+const { createNotification } = require("../services/notification.service");
 
-module.exports = (paymentCollection, userCollection, subscriptionCollection) => {
+module.exports = (paymentCollection, userCollection, subscriptionCollection, notificationCollection) => {
   const router = express.Router();
 
   // Stripe calls this endpoint asynchronously after checkout/subscription events.
@@ -22,13 +23,19 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection) => 
         await paymentCollection.updateOne({ stripeSessionId: object.id, userId: metadata.userId }, { $set: { status: "succeeded", updatedAt: new Date(), transactionId: object.payment_intent || object.id } });
         await userCollection.updateOne({ _id: metadata.userId }, { $set: { plan: metadata.plan.toUpperCase(), updatedAt: new Date() } });
         if (subscriptionCollection) await subscriptionCollection.updateOne({ userId: metadata.userId }, { $set: { userId: metadata.userId, role: metadata.role || "seeker", plan: metadata.plan.toUpperCase(), stripeCustomerId: object.customer || null, stripeSubscriptionId: object.subscription || null, status: "active", cancelAtPeriodEnd: false, updatedAt: new Date() } }, { upsert: true });
+        await createNotification(notificationCollection, { userId: metadata.userId, type: "billing", title: "Payment successful", body: `Your ${metadata.plan.toUpperCase()} subscription is now active.` });
       }
       if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.type) && subscriptionCollection) {
         const current = await subscriptionCollection.findOne({ $or: [{ stripeSubscriptionId: object.id }, { stripeCustomerId: object.customer }, { userId: metadata.userId }] });
         if (current) {
           const nextStatus = event.type === "customer.subscription.deleted" ? "canceled" : object.status;
           await subscriptionCollection.updateOne({ _id: current._id }, { $set: { status: nextStatus, cancelAtPeriodEnd: Boolean(object.cancel_at_period_end), currentPeriodEnd: object.current_period_end ? new Date(object.current_period_end * 1000) : current.currentPeriodEnd, updatedAt: new Date() } });
-          if (event.type === "customer.subscription.deleted") await userCollection.updateOne({ _id: current.userId }, { $set: { plan: "FREE", updatedAt: new Date() } });
+          if (event.type === "customer.subscription.deleted") {
+            await userCollection.updateOne({ _id: current.userId }, { $set: { plan: "FREE", updatedAt: new Date() } });
+            await createNotification(notificationCollection, { userId: current.userId, type: "billing", title: "Subscription cancelled", body: "Your subscription has been cancelled and your account has returned to the Free plan." });
+          } else {
+            await createNotification(notificationCollection, { userId: current.userId, type: "billing", title: "Subscription updated", body: `Your subscription status is now ${nextStatus}.` });
+          }
         }
       }
       if (["invoice.payment_succeeded", "invoice.payment_failed"].includes(event.type) && subscriptionCollection) {
@@ -37,6 +44,7 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection) => 
           const succeeded = event.type === "invoice.payment_succeeded";
           await paymentCollection.updateOne({ stripePaymentIntentId: object.payment_intent || object.id }, { $setOnInsert: createPaymentDoc({ userId: current.userId, role: current.role, plan: current.plan, amount: Number(object.amount_paid || object.amount_due || 0) / 100, stripePaymentIntentId: object.payment_intent || object.id, transactionId: object.id, status: succeeded ? "succeeded" : "failed" }) });
           await subscriptionCollection.updateOne({ _id: current._id }, { $set: { status: succeeded ? "active" : "past_due", updatedAt: new Date() } });
+          await createNotification(notificationCollection, { userId: current.userId, type: "billing", title: succeeded ? "Invoice paid" : "Payment failed", body: succeeded ? "Your recurring subscription payment was processed successfully." : "Your recurring subscription payment failed. Please update your billing method." });
         }
       }
       res.json({ received: true });

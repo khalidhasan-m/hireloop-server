@@ -5,8 +5,9 @@ const { checkSeekerApplicationLimit } = require("../middleware/planLimit");
 const { createApplicationDoc } = require("../models/Application");
 const { APPLICATION_STATUS } = require("../utils/constants");
 const { sendApplicationStatusEmail } = require("../services/email.service");
+const { createNotification } = require("../services/notification.service");
 
-module.exports = (applicationCollection, jobCollection) => {
+module.exports = (applicationCollection, jobCollection, notificationCollection) => {
   const router = express.Router();
 
   router.post("/", auth, checkSeekerApplicationLimit, async (req, res) => {
@@ -19,7 +20,10 @@ module.exports = (applicationCollection, jobCollection) => {
       });
       newApplication.status = APPLICATION_STATUS.APPLIED;
 
+      const job = await jobCollection.findOne({ _id: new ObjectId(newApplication.jobId) });
+      if (!job) return res.status(404).json({ success: false, message: "Job not found" });
       const result = await applicationCollection.insertOne(newApplication);
+      await createNotification(notificationCollection, { userId: job.recruiterId, type: "application", title: "New job application", body: `${req.user.name || req.user.email} applied for ${job.title || "your job"}.`, applicationId: String(result.insertedId), jobId: String(job._id) });
 
       res.status(201).json({
         success: true,
@@ -83,6 +87,7 @@ module.exports = (applicationCollection, jobCollection) => {
         return res.status(404).json({ success: false, message: "Application not found" });
       }
 
+      await createNotification(notificationCollection, { userId: updated.candidateId, type: "application", title: "Application status updated", body: `Your application for ${job?.title || "a job"} is now ${status}.`, applicationId: String(updated._id), status });
       sendApplicationStatusEmail({ to: updated.candidateEmail, candidateName: updated.candidateName, jobTitle: job?.title, status }).catch((error) => console.error("Application notification failed:", error.message));
       res.json({
         success: true,

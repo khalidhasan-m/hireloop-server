@@ -19,6 +19,7 @@ module.exports = (jobCollection) => {
         companyName: company.name,
         recruiterId: req.user.id,
         status: "active",
+        applicantsCount: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

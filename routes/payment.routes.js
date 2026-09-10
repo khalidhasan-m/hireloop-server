@@ -1,3 +1,4 @@
+const { ObjectId } = require("mongodb");
 const express = require("express");
 const auth = require("../middleware/auth");
 const { stripe } = require("../config/stripe");
@@ -8,7 +9,7 @@ const { createNotification } = require("../services/notification.service");
 module.exports = (paymentCollection, userCollection, subscriptionCollection, notificationCollection) => {
   const router = express.Router();
 
-  // Stripe calls this endpoint asynchronously after checkout/subscription events.
+  // Stripe calls this endpoint asynchronously after payment/subscription events.
   router.post("/webhook", async (req, res) => {
     try {
       if (!stripe) return res.status(503).json({ success: false, message: "Stripe is not configured" });
@@ -19,12 +20,14 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection, not
       const event = stripe.webhooks.constructEvent(req.rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET);
       const object = event.data?.object || event;
       const metadata = object.metadata || {};
-      if (event.type === "checkout.session.completed" && metadata.userId && metadata.plan) {
-        await paymentCollection.updateOne({ stripeSessionId: object.id, userId: metadata.userId }, { $set: { status: "succeeded", updatedAt: new Date(), transactionId: object.payment_intent || object.id } });
+      
+      if (event.type === "payment_intent.succeeded" && metadata.userId && metadata.plan) {
+        await paymentCollection.updateOne({ stripePaymentIntentId: object.id, userId: metadata.userId }, { $set: { status: "succeeded", updatedAt: new Date(), transactionId: object.id } });
         await userCollection.updateOne({ _id: metadata.userId }, { $set: { plan: metadata.plan.toUpperCase(), updatedAt: new Date() } });
         if (subscriptionCollection) await subscriptionCollection.updateOne({ userId: metadata.userId }, { $set: { userId: metadata.userId, role: metadata.role || "seeker", plan: metadata.plan.toUpperCase(), stripeCustomerId: object.customer || null, stripeSubscriptionId: object.subscription || null, status: "active", cancelAtPeriodEnd: false, updatedAt: new Date() } }, { upsert: true });
         await createNotification(notificationCollection, { userId: metadata.userId, type: "billing", title: "Payment successful", body: `Your ${metadata.plan.toUpperCase()} subscription is now active.` });
       }
+
       if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.type) && subscriptionCollection) {
         const current = await subscriptionCollection.findOne({ $or: [{ stripeSubscriptionId: object.id }, { stripeCustomerId: object.customer }, { userId: metadata.userId }] });
         if (current) {
@@ -38,15 +41,7 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection, not
           }
         }
       }
-      if (["invoice.payment_succeeded", "invoice.payment_failed"].includes(event.type) && subscriptionCollection) {
-        const current = await subscriptionCollection.findOne({ $or: [{ stripeSubscriptionId: object.subscription }, { stripeCustomerId: object.customer }] });
-        if (current) {
-          const succeeded = event.type === "invoice.payment_succeeded";
-          await paymentCollection.updateOne({ stripePaymentIntentId: object.payment_intent || object.id }, { $setOnInsert: createPaymentDoc({ userId: current.userId, role: current.role, plan: current.plan, amount: Number(object.amount_paid || object.amount_due || 0) / 100, stripePaymentIntentId: object.payment_intent || object.id, transactionId: object.id, status: succeeded ? "succeeded" : "failed" }) });
-          await subscriptionCollection.updateOne({ _id: current._id }, { $set: { status: succeeded ? "active" : "past_due", updatedAt: new Date() } });
-          await createNotification(notificationCollection, { userId: current.userId, type: "billing", title: succeeded ? "Invoice paid" : "Payment failed", body: succeeded ? "Your recurring subscription payment was processed successfully." : "Your recurring subscription payment failed. Please update your billing method." });
-        }
-      }
+
       res.json({ received: true });
     } catch (error) { res.status(400).json({ success: false, message: error.message }); }
   });
@@ -63,72 +58,8 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection, not
     }
   });
 
-  router.post("/create-checkout-session", auth, async (req, res) => {
-    try {
-      if (!stripe) {
-        return res.status(503).json({
-          success: false,
-          message: "Stripe is not configured. Set STRIPE_SECRET_KEY.",
-        });
-      }
-
-      const { plan, role } = req.body;
-      const plans = role === "recruiter" ? RECRUITER_PLANS : SEEKER_PLANS;
-      const planConfig = plans[plan?.toUpperCase()];
-
-      if (!planConfig || planConfig.price === 0) {
-        return res.status(400).json({ success: false, message: "Invalid plan" });
-      }
-
-      const priceId = planConfig.priceId;
-      const sessionParams = {
-        mode: "subscription",
-        success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/dashboard/${role || "seeker"}/billing?success=1`,
-        cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/dashboard/${role || "seeker"}/billing?canceled=1`,
-        client_reference_id: req.user.id,
-        metadata: {
-          userId: req.user.id,
-          plan: plan.toUpperCase(),
-          role: role || "seeker",
-        },
-      };
-
-      if (priceId) {
-        sessionParams.line_items = [{ price: priceId, quantity: 1 }];
-      } else {
-        sessionParams.line_items = [
-          {
-            price_data: {
-              currency: "usd",
-              product_data: { name: `HireLoop ${planConfig.name}` },
-              unit_amount: Math.round(planConfig.price * 100),
-              recurring: { interval: "month" },
-            },
-            quantity: 1,
-          },
-        ];
-      }
-
-      const session = await stripe.checkout.sessions.create(sessionParams);
-
-      const paymentDoc = createPaymentDoc({
-        userId: req.user.id,
-        role: role || "seeker",
-        plan: plan.toUpperCase(),
-        amount: planConfig.price,
-        stripeSessionId: session.id,
-        status: "pending",
-      });
-      await paymentCollection.insertOne(paymentDoc);
-
-      res.json({ success: true, url: session.url, sessionId: session.id });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ success: false, message: error.message });
-    }
-  });
-
-  router.get("/subscription", auth, async (req, res) => {
+  // Replaced checkout session with a PaymentIntent to support custom Stripe Elements & assistant panel
+  router.get("/my", auth, async (req, res) => {
     const subscription = await subscriptionCollection?.findOne({ userId: req.user.id });
     res.json({ success: true, data: subscription || { plan: req.user.plan || "FREE", status: "inactive" } });
   });
@@ -165,21 +96,144 @@ module.exports = (paymentCollection, userCollection, subscriptionCollection, not
 
   router.post("/confirm", auth, async (req, res) => {
     try {
-      const { sessionId, plan } = req.body;
+      const { sessionId, plan: bodyPlan } = req.body || {};
+      let plan = String(bodyPlan || "").toUpperCase();
+      let role = req.user.role || "seeker";
+      let amount = 0;
+      let found = null;
+
       if (sessionId) {
+        found = await paymentCollection.findOne({ 
+          $or: [{ stripeSessionId: sessionId }, { stripePaymentIntentId: sessionId }], 
+          userId: req.user.id 
+        });
+        if (found) {
+          if (found.plan) plan = String(found.plan).toUpperCase();
+          if (found.role) role = found.role;
+          amount = Number(found.amount || 0);
+        }
+      }
+
+      if (!plan || plan === "FREE" || plan === "NULL" || plan === "UNDEFINED") {
+        return res.status(400).json({ success: false, message: "A paid plan is required" });
+      }
+
+      const now = new Date();
+      const transactionId = found?.transactionId || sessionId || `manual_${Date.now()}`;
+
+      if (found) {
         await paymentCollection.updateOne(
-          { stripeSessionId: sessionId, userId: req.user.id },
-          { $set: { status: "succeeded", updatedAt: new Date() } },
+          { _id: found._id },
+          { $set: { status: "succeeded", transactionId, updatedAt: now } },
+        );
+      } else {
+        await paymentCollection.insertOne(
+          createPaymentDoc({
+            userId: req.user.id,
+            role,
+            plan,
+            amount,
+            stripePaymentIntentId: sessionId || null,
+            transactionId,
+            status: "succeeded",
+          }),
         );
       }
-      if (plan && userCollection) {
-        await userCollection.updateOne(
-          { _id: req.user.id },
-          { $set: { plan: plan.toUpperCase(), updatedAt: new Date() } },
+
+      let userId = req.user.id;
+      try {
+        if (ObjectId.isValid(userId)) userId = new ObjectId(userId);
+      } catch (e) {}
+      if (userCollection) {
+        await userCollection.updateOne({ _id: userId }, { $set: { plan, updatedAt: now } });
+      }
+
+      if (subscriptionCollection) {
+        await subscriptionCollection.updateOne(
+          { userId: req.user.id },
+          {
+            $set: {
+              userId: req.user.id,
+              role,
+              plan,
+              status: "active",
+              cancelAtPeriodEnd: false,
+              updatedAt: now,
+            },
+          },
+          { upsert: true },
         );
       }
-      res.json({ success: true, message: "Payment confirmed" });
+
+      await createNotification(notificationCollection, {
+        userId: req.user.id,
+        type: "billing",
+        title: "Payment successful",
+        body: `Your ${plan} subscription is now active.`,
+      });
+
+      res.json({ success: true, message: "Payment confirmed", data: { plan, role } });
     } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  router.post("/create-payment-intent", auth, async (req, res) => {
+    try {
+      if (!stripe) return res.status(503).json({ success: false, message: "Stripe is not configured" });
+      const { plan: bodyPlan, role: bodyRole } = req.body || {};
+      let plan = String(bodyPlan || "").toUpperCase();
+      let role = String(bodyRole || (req.user.role || "seeker")).toLowerCase();
+      let amount = 0;
+
+      const allPlans = { ...SEEKER_PLANS, ...RECRUITER_PLANS };
+      const p = allPlans[plan];
+      if (p && typeof p.price === "number") {
+        amount = Math.round(p.price * 100); // Stripe amount in cents
+      } else if (bodyPlan && !(plan in allPlans)) {
+        return res.status(400).json({ success: false, message: `Unknown plan: ${bodyPlan}` });
+      }
+
+      const now = new Date();
+      const transactionId = `pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount,
+        currency: "usd",
+        automatic_payment_methods: { enabled: true },
+        metadata: {
+          userId: req.user.id,
+          plan,
+          role,
+          transactionId,
+          source: "hireloop_create_payment_intent",
+        },
+        description: `HireLoop ${plan} subscription (${role})`,
+      });
+
+      await paymentCollection.insertOne(
+        createPaymentDoc({
+          userId: req.user.id,
+          role,
+          plan: plan || "FREE",
+          amount,
+          stripePaymentIntentId: paymentIntent.id,
+          transactionId,
+          status: amount > 0 ? "pending" : "succeeded",
+        })
+      );
+
+      res.json({
+        success: true,
+        clientSecret: paymentIntent.client_secret,
+        paymentIntentId: paymentIntent.id,
+        amount,
+        currency: paymentIntent.currency,
+        plan,
+        role,
+      });
+    } catch (error) {
+      console.error("create-payment-intent error:", error);
       res.status(500).json({ success: false, message: error.message });
     }
   });

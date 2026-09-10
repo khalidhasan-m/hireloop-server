@@ -58,6 +58,10 @@ stripe listen --forward-to localhost:5050/api/payments/webhook
 
 Copy the signing secret printed by Stripe CLI into `STRIPE_WEBHOOK_SECRET` and restart the server. Test checkout with Stripe test cards only. The webhook endpoint verifies the raw request body and Stripe signature before processing events.
 
+**Quick test without webhooks (client-confirm flow):** the frontend success page (`/success?session_id=...`) calls `POST /api/payments/confirm`, which marks the pending payment as succeeded and activates the user's plan directly. This is convenient for testing but trusts the client, so it is not recommended for production.
+
+Before anything works, `STRIPE_SECRET_KEY` in `.env` must be a **real** key from https://dashboard.stripe.com/test/apikeys — the placeholder template is rejected by Stripe with "Invalid API Key provided". Run `node scripts/stripe-check.js` to verify the configuration.
+
 Checkout completion, recurring invoice success/failure, subscription updates and deletions, cancellation-at-period-end, plan changes with proration, payment history, and Admin plan grants are supported. Paid plans should be activated from verified Stripe webhook events rather than trusting a client-only success redirect.
 
 ## API base URL
